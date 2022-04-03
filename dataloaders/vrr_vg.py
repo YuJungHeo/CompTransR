@@ -22,13 +22,7 @@ class Dataset(data.Dataset):
             self.is_training = False
 
         self.gt_classes, self.gt_relationships, self.gt_boxes, self.gt_nboxes, self.gt_adjmats, self.img_size, self.img_idxs = load_graphs_vrrvg(self.mode, self.conf.DATA_PATH)
-        # self.kg_priors, self.prior_so = knowledge_prior(self.conf.dpath, self.gt_classes, self.img_idxs)
         self.kg_priors = knowledge_prior(self.conf.DATA_PATH, self.gt_classes, self.img_idxs)
-        # self.class_weight = cal_class_weight(os.path.join(self.conf.dpath +'/VRD-SGG-dicts-new.pkl'))#torch.ones(330) ## temp
-        # print("Class_weight!!!!!!")
-        # print(self.class_weight)
-        # print(sum(self.class_weight))
-        # exit()
         self.cluster_indices = make_cluster_indices(self.gt_nboxes, self.conf.batch_size, self.mode, True)
         self.num_batch = len(self.cluster_indices)
 
@@ -36,26 +30,21 @@ class Dataset(data.Dataset):
         return len(self.img_idxs)
 
     def __getitem__(self, idx):
-        # print (idx)
         if np.isnan(idx):
             return
         else:
             idx = int(idx)
 
         img_idx = self.img_idxs[idx]
-        vnode = np.load(os.path.join(self.conf.DATA_PATH + '/VrR-VG-feat/%s.npy' % (img_idx)))
-        vedge = np.load(os.path.join(self.conf.DATA_PATH + '/VrR-VG-feat/%s.npy' % (img_idx)))
+        vnode = np.load(os.path.join(self.conf.DATA_PATH + '/VrR-VG-node/%s.npy' % (img_idx)))
+        vedge = np.load(os.path.join(self.conf.DATA_PATH + '/VrR-VG-edge/%s.npy' % (img_idx)))
 
         gt_boxes = self.gt_boxes[idx].copy()
-        # scale = IM_SCALE / BOX_SCALE
-        # gt_boxes = gt_boxes.astype(np.float32) * scale
         nnode = gt_boxes.shape[0]
         gt_rels = self.gt_relationships[idx].copy()
         gt_classes = self.gt_classes[idx].copy()
         im_size = self.img_size[idx]
         kg_priors = self.kg_priors[idx].copy()
-        # prior_sos = self.prior_so[idx].copy()
-        # print(kg_priors)
         all_pairs = np.transpose(np.mask_indices(nnode, np.triu, 1))
 
         if self.conf.p_type == 'coord':
@@ -80,7 +69,6 @@ class Dataset(data.Dataset):
             'gt_relations': gt_rels,
             'gt_adjmat': gt_adjmat,
             'kg_priors': kg_priors,
-            # 'prior_sos': prior_sos,
             'index': idx,
             'vnode': vnode,
             'vedge': vedge,
@@ -177,13 +165,6 @@ def assertion_checks(entry):
     if entry['gt_classes'].shape[0] != num_gt:
         raise ValueError("GT classes and GT boxes must have same number of examples")
 
-#     try: ## why error occured here? have to check!!
-#         assert (entry['gt_boxes'][:, 2] >= entry['gt_boxes'][:, 0]).all()
-#         assert (entry['gt_boxes'] >= -1).all()
-#     except:
-#         import pudb; pudb.set_trace()
-
-
 def make_cluster_indices(n_boxes, max_batch_size, mode, minieval=False, validate_batch_size=False):
     validate_batch_size = False
     chunks_list = []
@@ -199,10 +180,6 @@ def make_cluster_indices(n_boxes, max_batch_size, mode, minieval=False, validate
 
     num_batch = [1 if x == 0 else x for x in num_batch]
     cluster = np.digitize(n_boxes, bins, right=True)
-
-    ## for statistics:
-    # unique, counts = np.unique(cluster, return_counts=True)
-    # (e.g) unique: array([ 1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 13]) # counts: array([ 7489, 22692, 18881,  8688,  3281,  1141,   361,   124,    42,    16,     6,     2])
 
     for i in range(len(bins)):
         idxs = np.where(cluster == i)[0]
@@ -265,22 +242,12 @@ def load_graphs_vrrvg(mode, dpath):
 
 def knowledge_prior(dpath, gt_classes, image_idxs, n_rel=118):
     prior = np.load(dpath + '/VrR-VG-traintest_prior.npy')  # _traintest.npy')
-    # with open (dpath + '/so_prior.pkl', 'rb') as ff:
-    #  prior_test = pickle.load(ff, encoding='latin1')
-    # Binarization part for knowledge prior
-    c = 0
-    prior = prior + c
-    prior[prior > c] = 1
-    # pairwise_sum = np.sum(prior, 2).reshape(100, 100, 1)
-    # prior = prior / (pairwise_sum+1e-5)
-
+    
     kg_prior = []
-    # prior_so = []
     for i, idx in enumerate(image_idxs):
         classes = gt_classes[i]
         n_node = classes.shape[0]
         prior_mask = np.zeros((n_node, n_node, n_rel))
-        # prior_mask_so = np.zeros((n_node, n_node, n_rel))
 
         for h_idx in range(n_node):
             for t_idx in range(n_node):
@@ -288,34 +255,8 @@ def knowledge_prior(dpath, gt_classes, image_idxs, n_rel=118):
                     continue
                 else:
                     prior_mask[h_idx, t_idx] = prior[classes[h_idx], classes[t_idx]]
-                    # prior_mask_so[h_idx, t_idx, 1:] = prior_test[classes[h_idx], classes[t_idx]]
         kg_prior.append(prior_mask)
-        # prior_so.append(prior_mask_so)
-    return kg_prior  # , prior_so
-
-
-def cal_class_weight(dict_file):
-    with open(dict_file, 'rb') as f:
-        data = pickle.load(f)
-
-    # count_sum = 0
-    class_weight = []
-    print(data)
-    class_weight.append(2000)  # for background rels
-    for i in range(1, len(data['predicate_count'])):
-        count = data['predicate_count'][i]
-        if count > 500:
-            class_weight.append(0.5)
-        #        elif count > 500 and count <= 1000:
-        #          class_weight.append(0.5)
-        else:
-            class_weight.append(1.0)
-        # class_weight.append(count)
-        # count_sum += count
-    # class_weight = [ for count in class_weight]#[count / count_sum for count in class_weight]
-    class_weight = torch.from_numpy(np.array(class_weight)).float()
-    return class_weight
-
+    return kg_prior
 
 class ClusterRandomSampler(Sampler):
     """Takes a dataset with cluster_indices property, cuts it into batch-sized chunks
@@ -343,10 +284,6 @@ class ClusterRandomSampler(Sampler):
         for i, cluster_indices in enumerate(self.data_source.cluster_indices):
 
             batches = cluster_indices
-            # batches = [cluster_indices[i:i + self.batch_size] for i in range(0, len(cluster_indices), self.batch_size)]
-            # filter our the shorter batches
-            # batches = [_ for _ in batches if len(_) == self.batch_size]
-
             if self.shuffle:
                 random.shuffle(batches)
 
@@ -362,16 +299,9 @@ class ClusterRandomSampler(Sampler):
 
             batch_lists.append(batches)
 
-            # flatten lists and shuffle the batches if necessary
-        # this works on batch level
-        # lst = self.flatten_list(batch_lists)
-
         if self.shuffle:
             random.shuffle(batch_lists)
 
-        # final flatten  - produce flat list of indexes
-        # lst = self.flatten_list(lst)
-        # return iter(lst)
         batch_lists = self.flatten_list(batch_lists)
         return batch_lists
 
@@ -379,38 +309,12 @@ class ClusterRandomSampler(Sampler):
         return iter(self.batch_lists)
 
     def __len__(self):
-        # return len(self.data_source)
         return len(self.batch_lists)
 
 
 class DataLoader(data.DataLoader):
     @classmethod
     def get(cls, train_dset, val_dset, conf):
-        """
-        train_sampler = ClusterRandomSampler(train_dset, conf.batch_size, conf.ngpu, True)
-        val_sampler = ClusterRandomSampler(val_dset, conf.batch_size, conf.ngpu, False)
-
-        train_loader = cls(
-                train_dset,
-                batch_size=conf.batch_size,
-                num_workers=conf.nworker,
-                collate_fn=lambda x: vg_collate(x, num_gpus=conf.ngpu, is_train=True, batch_size=conf.batch_size),
-                sampler=train_sampler,
-                shuffle=False,
-                pin_memory=True,
-                drop_last=False)
-
-        val_loader = cls(
-            val_dset,
-            batch_size=conf.batch_size,
-            num_workers=conf.nworker,
-            collate_fn=lambda x: vg_collate(x, num_gpus=conf.ngpu, is_train=False, batch_size=conf.batch_size),
-            sampler=val_sampler,
-            shuffle=False,
-            pin_memory=True,
-            drop_last=False)
-
-        """
         train_loader = cls(
             train_dset,
             batch_size=conf.batch_size,

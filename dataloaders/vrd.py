@@ -193,10 +193,6 @@ def make_cluster_indices(n_boxes, max_batch_size, mode, minieval=False, validate
     num_batch = [1 if x == 0 else x for x in num_batch]
     cluster = np.digitize(n_boxes, bins, right=True)
 
-    ## for statistics:
-    # unique, counts = np.unique(cluster, return_counts=True)
-    # (e.g) unique: array([ 1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 13]) # counts: array([ 7489, 22692, 18881,  8688,  3281,  1141,   361,   124,    42,    16,     6,     2])
-
     for i in range(len(bins)):
         idxs = np.where(cluster == i)[0]
 
@@ -257,16 +253,7 @@ def load_graphs_vrd(mode, dpath):
 
 
 def knowledge_prior(dpath, gt_classes, image_idxs, n_rel=71):
-    prior = np.load(dpath + '/vrd_prior_traintest.npy')  # _traintest.npy', vrd_prior.npy
-
-    """
-    # Binarize knowledge prior and use it to filter predictions
-    c = 0
-    prior = prior + c
-    prior[prior > c] = 1
-    """
-
-    # normalize prior and use it KL-loss
+    prior = np.load(dpath + '/vrd_prior_traintest.npy')
     prior = prior / (np.sum(prior, axis=-1, keepdims=True) + 1e-10)
 
     kg_prior = []
@@ -311,10 +298,6 @@ class ClusterRandomSampler(Sampler):
         for i, cluster_indices in enumerate(self.data_source.cluster_indices):
 
             batches = cluster_indices
-            # batches = [cluster_indices[i:i + self.batch_size] for i in range(0, len(cluster_indices), self.batch_size)]
-            # filter our the shorter batches
-            # batches = [_ for _ in batches if len(_) == self.batch_size]
-
             if self.shuffle:
                 random.shuffle(batches)
 
@@ -330,16 +313,9 @@ class ClusterRandomSampler(Sampler):
 
             batch_lists.append(batches)
 
-            # flatten lists and shuffle the batches if necessary
-        # this works on batch level
-        # lst = self.flatten_list(batch_lists)
-
         if self.shuffle:
             random.shuffle(batch_lists)
 
-        # final flatten  - produce flat list of indexes
-        # lst = self.flatten_list(lst)
-        # return iter(lst)
         batch_lists = self.flatten_list(batch_lists)
         return batch_lists
 
@@ -347,38 +323,12 @@ class ClusterRandomSampler(Sampler):
         return iter(self.batch_lists)
 
     def __len__(self):
-        # return len(self.data_source)
         return len(self.batch_lists)
 
 
 class DataLoader(data.DataLoader):
     @classmethod
     def get(cls, train_dset, val_dset, conf):
-        """
-        train_sampler = ClusterRandomSampler(train_dset, conf.batch_size, conf.ngpu, True)
-        val_sampler = ClusterRandomSampler(val_dset, conf.batch_size, conf.ngpu, False)
-
-        train_loader = cls(
-                train_dset,
-                batch_size=conf.batch_size,
-                num_workers=conf.nworker,
-                collate_fn=lambda x: vg_collate(x, num_gpus=conf.ngpu, is_train=True, batch_size=conf.batch_size),
-                sampler=train_sampler,
-                shuffle=False,
-                pin_memory=True,
-                drop_last=False)
-
-        val_loader = cls(
-            val_dset,
-            batch_size=conf.batch_size,
-            num_workers=conf.nworker,
-            collate_fn=lambda x: vg_collate(x, num_gpus=conf.ngpu, is_train=False, batch_size=conf.batch_size),
-            sampler=val_sampler,
-            shuffle=False,
-            pin_memory=True,
-            drop_last=False)
-
-        """
         train_loader = cls(
             train_dset,
             batch_size=conf.batch_size,

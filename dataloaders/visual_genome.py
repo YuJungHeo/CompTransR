@@ -28,7 +28,6 @@ class Dataset(data.Dataset):
         self.kg_priors = knowledge_prior(self.conf.DATA_PATH, self.gt_classes, self.idxs)
         
         gdpath = self.conf.SF_PATH + 'VG-SGG-dicts.json'
-        self.class_weight = cal_class_weight(gdpath) ## not used now
 
         self.img_idxs = load_image_idxs(self.conf.IMG_IDX, self.conf.IMG_PATH)
         self.img_idxs = [self.img_idxs[i] for i in np.where(self.split_mask)[0]]            
@@ -40,7 +39,6 @@ class Dataset(data.Dataset):
         return (self.num_batch*self.conf.batch_size)
 
     def __getitem__(self, idx):
-#         print (idx)
         if np.isnan(idx):
             return
         else:
@@ -216,10 +214,6 @@ def make_cluster_indices(n_boxes, max_batch_size, mode, minieval=False, validate
     num_batch = [1 if x == 0 else x for x in num_batch]
     cluster = np.digitize(n_boxes, bins, right=True)
     
-    ## for statistics:
-    # unique, counts = np.unique(cluster, return_counts=True)
-    # (e.g) unique: array([ 1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 13]) # counts: array([ 7489, 22692, 18881,  8688,  3281,  1141,   361,   124,    42,    16,     6,     2])
-
     for i in range(len(bins)):
         idxs = np.where(cluster==i)[0]
 
@@ -308,13 +302,11 @@ def load_graphs(gpath, mode, num_im=-1, num_val_im=0, filter_empty_rels=True, fi
     split_mask = np.zeros_like(data_split).astype(bool)
     split_mask[image_index] = True
 
-    # Get box information
     all_labels = roi_h5['labels'][:, 0]
-    all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]  # will index later
-    assert np.all(all_boxes[:, :2] >= 0)  # sanity check
-    assert np.all(all_boxes[:, 2:] > 0)  # no empty box
+    all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]
+    assert np.all(all_boxes[:, :2] >= 0)
+    assert np.all(all_boxes[:, 2:] > 0)
 
-    # convert from xc, yc, w, h to x1, y1, x2, y2
     all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
     all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
 
@@ -323,13 +315,11 @@ def load_graphs(gpath, mode, num_im=-1, num_val_im=0, filter_empty_rels=True, fi
     im_to_first_rel = roi_h5['img_to_first_rel'][split_mask]
     im_to_last_rel = roi_h5['img_to_last_rel'][split_mask]
 
-    # load relation labels
     _relations = roi_h5['relationships'][:]
     _relation_predicates = roi_h5['predicates'][:, 0]
     assert (im_to_first_rel.shape[0] == im_to_last_rel.shape[0])
     assert (_relations.shape[0] == _relation_predicates.shape[0])  # sanity check
 
-    # Get everything by image.
     boxes = []
     num_boxes = []
     gt_classes = []
@@ -389,22 +379,6 @@ def knowledge_prior(path, gt_classes, image_idxs, n_rel=51):
                     prior_mask[h_idx, t_idx] = prior[classes[h_idx], classes[t_idx]]
         kg_prior.append(prior_mask)
     return kg_prior
-    
-def cal_class_weight(dict_file):
-    with open(dict_file) as f:
-        data = json.load(f)
-
-    count_sum = 0
-    class_weight = []
-
-    class_weight.append(0.02*2046006) # for background rels
-    for i in data['idx_to_predicate']:
-        count = data['predicate_count'][data['idx_to_predicate'][i]]
-        class_weight.append(count)
-        count_sum += count
-    class_weight = [count / count_sum for count in class_weight]
-    class_weight = torch.from_numpy(np.array(class_weight)).float()
-    return class_weight
 
 class ClusterRandomSampler(Sampler):
     """Takes a dataset with cluster_indices property, cuts it into batch-sized chunks
@@ -432,10 +406,6 @@ class ClusterRandomSampler(Sampler):
         for i, cluster_indices in enumerate(self.data_source.cluster_indices):
             
             batches = cluster_indices
-            # batches = [cluster_indices[i:i + self.batch_size] for i in range(0, len(cluster_indices), self.batch_size)]
-            # filter our the shorter batches
-            # batches = [_ for _ in batches if len(_) == self.batch_size]
-            
             if self.shuffle:
                 random.shuffle(batches)
                 
@@ -451,16 +421,9 @@ class ClusterRandomSampler(Sampler):
                 
             batch_lists.append(batches)       
         
-        # flatten lists and shuffle the batches if necessary
-        # this works on batch level
-        # lst = self.flatten_list(batch_lists)
-
         if self.shuffle:
             random.shuffle(batch_lists)
 
-        # final flatten  - produce flat list of indexes
-        # lst = self.flatten_list(lst)     
-        # return iter(lst)
         batch_lists = self.flatten_list(batch_lists)
         return batch_lists
     
@@ -468,7 +431,6 @@ class ClusterRandomSampler(Sampler):
         return iter(self.batch_lists)
 
     def __len__(self):
-        #return len(self.data_source)
         return len(self.batch_lists)
 
 class DataLoader(data.DataLoader):
@@ -497,24 +459,4 @@ class DataLoader(data.DataLoader):
             shuffle=False, 
             pin_memory=True, 
             drop_last=False)    
-        
-        """
-        train_loader = cls(
-                train_dset, 
-                batch_size=conf.batch_size, 
-                num_workers=conf.nworker, 
-                collate_fn=lambda x: vg_collate(x, num_gpus=conf.ngpu, is_train=True, batch_size=conf.batch_size),
-                shuffle=True, 
-                pin_memory=True, 
-                drop_last=True)    
-        
-        val_loader = cls(
-            test_dset, 
-            batch_size=conf.val_batch_size, 
-            num_workers=conf.nworker, 
-            collate_fn=lambda x: vg_collate(x, num_gpus=conf.ngpu, is_train=False, batch_size=conf.batch_size), 
-            shuffle=False, 
-            pin_memory=True, 
-            drop_last=True)    
-        """
         return train_loader, val_loader
